@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>py-runner-kernel — String in, JSON out</title>
+  <meta name="description" content="Persistent Python code runner: a lightweight, dependency-free ipykernel-like execution library and HTTP server." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <button id="nav-toggle" aria-label="Toggle navigation">☰</button>
+  <nav id="sidebar">
+    <div class="brand">py-runner-kernel <span>v0.1.1</span></div>
+    <a href="#overview" class="active">Overview</a>
+    <a href="#install">Install</a>
+    <a href="#quickstart">Quickstart</a>
+    <a href="#api">API reference</a>
+    <a href="#cli">CLI</a>
+    <a href="#server">HTTP server</a>
+    <a href="#acode">Acode integration</a>
+    <a href="#license">License</a>
+    <div class="side-links">
+      <a href="https://pypi.org/project/py-runner-kernel/">PyPI</a>
+      <a href="https://github.com/RightFix/py-runner">GitHub</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="overview">
+      <h1>py-runner-kernel</h1>
+      <p class="tagline">Persistent Python code runner: <strong>string in, JSON out</strong>.</p>
+      <p>A lightweight, dependency-free, ipykernel-like execution library — no Jupyter
+      server, no ZMQ, no required third-party packages. Zero runtime dependencies, Python ≥ 3.10.</p>
+      <pre><code class="lang-python">from py_runner import Kernel
+
+k = Kernel()
+k.execute("x = 40 + 2")
+print(k.execute("x + 1"))
+# {"output": null,
+#  "display": [{"type": "text/plain", "data": "43"}],
+#  "error": null, "execution_count": 2, "execution_time": 0.0001}</code></pre>
+    </section>
+
+    <section id="install">
+      <h2>Install</h2>
+      <pre><code class="lang-bash">pip install py-runner-kernel</code></pre>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <pre><code class="lang-python">from py_runner import Kernel, execute, execute_json
+
+# Module-level shared kernel
+execute("import math")
+print(execute_json("math.sqrt(16)"))
+
+# Isolated session kernel (one per user/request)
+k = Kernel(on_input=lambda prompt: "bob", max_history=100)
+r = k.execute('name = input("who? ")\nname.upper()')
+assert r["display"][0]["data"] == "'BOB'"</code></pre>
+      <p>Every result is a JSON-serializable dict:</p>
+      <table>
+        <tr><th>key</th><th>value</th></tr>
+        <tr><td><code>output</code></td><td>captured stdout (<code>str | None</code>)</td></tr>
+        <tr><td><code>display</code></td><td>rich values: <code>text/plain</code>, <code>text/html</code>, <code>image/png</code> base64, …</td></tr>
+        <tr><td><code>error</code></td><td>traceback / warning text (<code>str | None</code>)</td></tr>
+        <tr><td><code>execution_count</code></td><td>incrementing cell number</td></tr>
+        <tr><td><code>execution_time</code></td><td>seconds (float)</td></tr>
+      </table>
+    </section>
+
+    <section id="api">
+      <h2>API reference</h2>
+      <h3><code>Kernel(...)</code></h3>
+      <pre><code class="lang-python">Kernel(
+    on_input=None,      # default callback for input(prompt)
+    max_history=100,    # cap on Out[N] entries (oldest evicted)
+    allow_shell=True,   # permit !cmd escapes
+    allow_pip=True,     # permit %pip installs
+)</code></pre>
+      <h3><code>execute(...)</code></h3>
+      <pre><code class="lang-python">k.execute(
+    code,
+    max_output_length=10000,
+    max_display_length=50000,
+    on_stream=None,          # live stdout chunks
+    on_input=None,           # per-call input() callback
+    timeout=None,            # seconds; TimeoutError past N
+    heartbeat_interval=None, # ping during silent fit() loops
+    on_heartbeat=None,
+)</code></pre>
+      <h3>Helpers</h3>
+      <ul>
+        <li><code>execute_json(code)</code> — same result as a JSON string</li>
+        <li><code>k.interrupt()</code> — stop the running cell (cooperative)</li>
+        <li><code>k.reset(keep_imports=False)</code> — wipe the namespace</li>
+        <li><code>k.clear_history()</code> — drop <code>Out[N]</code> entries</li>
+        <li><code>k.stats()</code> — execution count, history size, namespace bytes</li>
+        <li><code>set_address_space_limit(mb)</code> — Unix memory cap (MemoryError instead of OOM)</li>
+      </ul>
+      <h3>Magics</h3>
+      <p><code>%time</code> · <code>%timeit</code> · <code>%who</code> / <code>%whos</code> ·
+      <code>%run file.py</code> · <code>%pip install …</code> · <code>!shell-cmd</code> · <code>%reset</code>.
+      A trailing <code>;</code> suppresses last-expression display.</p>
+    </section>
+
+    <section id="cli">
+      <h2>CLI</h2>
+      <pre><code class="lang-bash">py-runner -c "print(2 + 3)"
+py-runner analysis.py --timeout 300 &gt; result.json
+cat cell.py | py-runner
+python -m py_runner -c "1+1"
+py-runner -c "x" --no-shell --no-pip</code></pre>
+    </section>
+
+    <section id="server">
+      <h2>HTTP server</h2>
+      <pre><code class="lang-bash">py-runner-serve --host 127.0.0.1 --port 8000 --max-sessions 100</code></pre>
+      <table>
+        <tr><th>method &amp; path</th><th>purpose</th></tr>
+        <tr><td><code>POST /sessions</code></td><td>create session → <code>{"session_id": …}</code> (server UUID, <code>201</code>; <code>429</code> past cap)</td></tr>
+        <tr><td><code>POST /execute</code></td><td><code>{session_id, code, timeout?}</code> → result JSON</td></tr>
+        <tr><td><code>POST /interrupt</code></td><td><code>{session_id}</code> → stop the running cell</td></tr>
+        <tr><td><code>GET /sessions</code></td><td>list live sessions</td></tr>
+        <tr><td><code>GET /sessions/{id}/stats</code></td><td>per-session usage snapshot</td></tr>
+        <tr><td><code>DELETE /sessions/{id}</code></td><td>destroy session</td></tr>
+        <tr><td><code>GET /health</code></td><td>liveness <code>{"status": "ok"}</code></td></tr>
+      </table>
+      <pre><code class="lang-bash">S=$(curl -s -X POST localhost:8000/sessions | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+curl -s -X POST localhost:8000/execute -d "{\"session_id\":\"$S\",\"code\":\"x = 40 + 2\"}"
+curl -s -X POST localhost:8000/execute -d "{\"session_id\":\"$S\",\"code\":\"x + 1\"}"
+curl -s -X DELETE localhost:8000/sessions/$S</code></pre>
+      <p>Sessions are isolated per ID and live until deleted (no idle timeout).
+      Kernels default to <code>allow_shell=false, allow_pip=false</code>;
+      pass <code>{"allow_shell": true}</code> to <code>POST /sessions</code> to relax per session.</p>
+    </section>
+
+    <section id="acode">
+      <h2>Acode integration</h2>
+      <p>The <a href="https://github.com/RightFix/jupyter-acode">jupyter-acode</a> extension
+      renders <code>.ipynb</code> notebooks on-device and executes cells through this server:
+      one server session per open notebook, Run / Run-all / Interrupt controls, and outputs
+      persisted back into the notebook file. Install the backend once from the extension
+      (<code>pip install py-runner-kernel</code>, globally or into a <code>/home</code> venv) —
+      the server starts itself under the hood on first run.</p>
+    </section>
+
+    <section id="license">
+      <h2>License</h2>
+      <p>AGPL-3.0-or-later. Note the network clause (§13): if you serve a modified version
+      over a network, you must offer its source to those users.</p>
+    </section>
+
+    <footer>py-runner-kernel · <a href="https://pypi.org/project/py-runner-kernel/">PyPI</a> · <a href="https://github.com/RightFix/py-runner">GitHub</a></footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
